@@ -66,7 +66,7 @@ impl DynBlocks {
 
     fn next_ptr(&mut self, size: usize, align: usize) -> *mut u8 {
         if let Some((ptr, len)) = self.blocks.last_mut().copied() {
-            let ptr = unsafe { ptr.offset(self.next_block_offset as isize) };
+            let ptr = unsafe { ptr.add(self.next_block_offset) };
             let align_offset = ptr.align_offset(align);
             if self.next_block_offset + align_offset + size <= len {
                 self.next_block_offset += align_offset + size;
@@ -94,10 +94,18 @@ impl DynBlocks {
             let ptr = alloc::alloc::alloc_zeroed(layout);
             self.next_block_offset = size;
             self.blocks.push((ptr, block_size));
-            return ptr;
+            ptr
         }
     }
 
+    /// # Safety
+    ///
+    /// Behavior is undefined if any of the following conditions are violated:
+    ///
+    /// * `src` must be valid for reads.
+    /// * `src` must be properly aligned.
+    /// * `src` must point to a properly initialized value of type `T`.
+    /// * `src` must not be used or dropped anymore (use std::mem::forget)
     pub unsafe fn push_raw<T: ?Sized>(&mut self, src: *const T) -> DynBlockRef<'_, T> {
         let size = mem::size_of_val::<T>(&*src);
         let align = mem::align_of_val::<T>(&*src);
@@ -189,12 +197,39 @@ impl<T: ?Sized> DynSequence<T> {
         self.ptrs.len()
     }
 
+    #[inline]
+    pub fn is_empty(&self) -> bool {
+        self.ptrs.is_empty()
+    }
+
+    /// Inserts a new value into the DynSequence at the given index (see Vec::insert)
+    /// by moving the value behind the pointer and taking ownership.
+    ///
+    /// # Safety
+    ///
+    /// Behavior is undefined if any of the following conditions are violated:
+    ///
+    /// * `src` must be valid for reads.
+    /// * `src` must be properly aligned.
+    /// * `src` must point to a properly initialized value of type `T`.
+    /// * `src` must not be used or dropped anymore (use std::mem::forget)
     pub unsafe fn insert_raw(&mut self, index: usize, src: *const T) -> &mut T {
         let mut r = self.blocks.push_raw(src);
         self.ptrs.insert(index, r.as_mut_ptr());
         r.into_mut()
     }
 
+    /// Adds a new value at the end of the DynSequence (see Vec::push)
+    /// by moving the value behind the pointer and taking ownership.
+    ///
+    /// # Safety
+    ///
+    /// Behavior is undefined if any of the following conditions are violated:
+    ///
+    /// * `src` must be valid for reads.
+    /// * `src` must be properly aligned.
+    /// * `src` must point to a properly initialized value of type `T`.
+    /// * `src` must not be used or dropped anymore (use std::mem::forget)
     pub unsafe fn push_raw(&mut self, src: *const T) -> &mut T {
         let mut r = self.blocks.push_raw(src);
         self.ptrs.push(r.as_mut_ptr());
@@ -203,12 +238,12 @@ impl<T: ?Sized> DynSequence<T> {
 
     #[cfg(feature = "unstable")]
     #[inline]
-    pub fn insert<U>(&mut self, index: usize, mut src: U) -> &mut T
+    pub fn insert<U>(&mut self, index: usize, src: U) -> &mut T
     where
         U: Unsize<T>,
     {
         unsafe {
-            let r = self.insert_raw(index, &mut src);
+            let r = self.insert_raw(index, &src);
             mem::forget(src);
             r
         }
@@ -216,12 +251,12 @@ impl<T: ?Sized> DynSequence<T> {
 
     #[cfg(feature = "unstable")]
     #[inline]
-    pub fn push<U>(&mut self, mut src: U) -> &mut T
+    pub fn push<U>(&mut self, src: U) -> &mut T
     where
         U: Unsize<T>,
     {
         unsafe {
-            let r = self.push_raw(&mut src);
+            let r = self.push_raw(&src);
             mem::forget(src);
             r
         }
@@ -270,6 +305,7 @@ macro_rules! dyn_sequence {
         {
             let r: &mut $crate::DynSequence<$t> = $r;
             $(
+                #[allow(unsafe_code, clippy::forget_copy, clippy::forget_ref)]
                 unsafe {
                     let mut v = $e;
                     $crate::__macro_raw_fn::$m(r, $($i,)? &mut v);
@@ -282,10 +318,10 @@ macro_rules! dyn_sequence {
         {
             let mut r: $crate::DynSequence::<$t> = $crate::DynSequence::new();
             $(
+                #[allow(unsafe_code, clippy::forget_copy, clippy::forget_ref)]
                 unsafe {
                     let mut v = $e;
-                    let v: *mut _ =  &mut v;
-                    r.push_raw(v);
+                    $crate::__macro_raw_fn::push(&mut r, &mut v);
                     $crate::__forget(v);
                 }
             )*
