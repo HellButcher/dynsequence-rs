@@ -37,7 +37,7 @@ jobs:
     - name: Select Nightly Features
       if: matrix.channel == 'nightly'
       run: |
-        echo 'CARGO_FEATURES_ARG="--features unstable"' >> $GITHUB_ENV
+        echo 'CARGO_FEATURES_ARG=--features unstable' >> $GITHUB_ENV
     - name: Build
       uses: actions-rs/cargo@v1
       with:
