@@ -30,8 +30,9 @@ extern crate alloc;
 
 use alloc::vec::Vec;
 use core::{
+    iter::FusedIterator,
     mem,
-    ops::{Deref, DerefMut},
+    ops::{Deref, DerefMut, Index, IndexMut},
     ptr,
 };
 
@@ -262,14 +263,112 @@ impl<T: ?Sized> DynSequence<T> {
         }
     }
 
+    #[inline]
     pub fn get(&self, index: usize) -> Option<&T> {
         let p: *mut T = *self.ptrs.get(index)?;
         unsafe { Some(&*p) }
     }
 
+    #[inline]
     pub fn get_mut(&mut self, index: usize) -> Option<&mut T> {
         let p: *mut T = *self.ptrs.get_mut(index)?;
         unsafe { Some(&mut *p) }
+    }
+
+    #[inline]
+    pub fn as_slice(&self) -> &[&T] {
+        unsafe { mem::transmute(self.ptrs.as_slice()) }
+    }
+
+    #[inline]
+    pub fn as_mut_slice(&mut self) -> &mut [&mut T] {
+        unsafe { mem::transmute(self.ptrs.as_mut_slice()) }
+    }
+
+    #[inline]
+    pub fn iter(&self) -> DynSeqIter<'_, T> {
+        self.as_slice().iter().copied()
+    }
+
+    #[inline]
+    pub fn iter_mut(&mut self) -> DynSeqIterMut<'_, T> {
+        DynSeqIterMut(self.as_mut_slice().iter_mut())
+    }
+}
+
+impl<T: ?Sized> Index<usize> for DynSequence<T> {
+    type Output = T;
+    #[inline]
+    fn index(&self, index: usize) -> &Self::Output {
+        self.get(index).expect("index out of bounds")
+    }
+}
+
+impl<T: ?Sized> IndexMut<usize> for DynSequence<T> {
+    #[inline]
+    fn index_mut(&mut self, index: usize) -> &mut Self::Output {
+        self.get_mut(index).expect("index out of bounds")
+    }
+}
+
+pub type DynSeqIter<'l, T> = core::iter::Copied<core::slice::Iter<'l, &'l T>>;
+pub struct DynSeqIterMut<'l, T: ?Sized>(core::slice::IterMut<'l, &'l mut T>);
+
+impl<'l, T: ?Sized> Iterator for DynSeqIterMut<'l, T> {
+    type Item = &'l mut T;
+    #[inline]
+    fn next(&mut self) -> Option<&'l mut T> {
+        Some(self.0.next()?)
+    }
+
+    fn size_hint(&self) -> (usize, Option<usize>) {
+        self.0.size_hint()
+    }
+
+    fn nth(&mut self, n: usize) -> Option<&'l mut T> {
+        Some(self.0.nth(n)?)
+    }
+
+    fn last(self) -> Option<&'l mut T> {
+        Some(self.0.last()?)
+    }
+
+    fn count(self) -> usize {
+        self.0.count()
+    }
+}
+
+impl<'l, T: ?Sized> DoubleEndedIterator for DynSeqIterMut<'l, T> {
+    #[inline]
+    fn next_back(&mut self) -> Option<&'l mut T> {
+        Some(self.0.next_back()?)
+    }
+}
+
+impl<'l, T: ?Sized> ExactSizeIterator for DynSeqIterMut<'l, T> {
+    #[inline]
+    fn len(&self) -> usize {
+        self.0.len()
+    }
+}
+
+impl<'l, T: ?Sized> FusedIterator for DynSeqIterMut<'l, T> {}
+
+impl<'l, T: ?Sized> IntoIterator for &'l DynSequence<T> {
+    type Item = &'l T;
+    type IntoIter = DynSeqIter<'l, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter()
+    }
+}
+
+impl<'l, T: ?Sized> IntoIterator for &'l mut DynSequence<T> {
+    type Item = &'l mut T;
+    type IntoIter = DynSeqIterMut<'l, T>;
+    #[inline]
+    fn into_iter(self) -> Self::IntoIter {
+        self.iter_mut()
     }
 }
 
