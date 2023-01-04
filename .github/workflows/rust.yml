@@ -35,7 +35,7 @@ jobs:
           ~/.cargo/git
         key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.*') }}
     - name: Select Nightly Features
-      if: ${{ matrix.channel == "nightly" }}
+      if: matrix.channel == 'nightly'
       run: |
         echo 'CARGO_FEATURES_ARG="--features unstable"' >> $GITHUB_ENV
     - name: Build
