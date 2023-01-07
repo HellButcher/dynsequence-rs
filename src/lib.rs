@@ -39,10 +39,10 @@ use core::{
 #[cfg(feature = "unstable")]
 use core::marker::Unsize;
 
-pub struct DynBlocks {
+struct DynBlocks {
     block_size: usize,
     max_block_size: usize,
-    blocks: Vec<(*mut u8, usize)>,
+    blocks: Vec<(*mut u8, usize, usize)>,
     next_block_offset: usize,
 }
 
@@ -66,7 +66,7 @@ impl DynBlocks {
     }
 
     fn next_ptr(&mut self, size: usize, align: usize) -> *mut u8 {
-        if let Some((ptr, len)) = self.blocks.last_mut().copied() {
+        if let Some((ptr, len, _)) = self.blocks.last_mut().copied() {
             let ptr = unsafe { ptr.add(self.next_block_offset) };
             let align_offset = ptr.align_offset(align);
             if self.next_block_offset + align_offset + size <= len {
@@ -81,7 +81,7 @@ impl DynBlocks {
                 let layout = alloc::alloc::Layout::from_size_align_unchecked(size, align);
                 let ptr_exact = alloc::alloc::alloc_zeroed(layout);
                 self.next_block_offset = size;
-                self.blocks.push((ptr_exact, size));
+                self.blocks.push((ptr_exact, size, align));
                 return ptr_exact;
             }
         }
@@ -94,7 +94,7 @@ impl DynBlocks {
             let layout = alloc::alloc::Layout::from_size_align_unchecked(block_size, align);
             let ptr = alloc::alloc::alloc_zeroed(layout);
             self.next_block_offset = size;
-            self.blocks.push((ptr, block_size));
+            self.blocks.push((ptr, block_size, align));
             ptr
         }
     }
@@ -120,36 +120,53 @@ impl DynBlocks {
         DynBlockRef(&mut *r)
     }
 
-    #[inline]
-    pub fn push<T>(&mut self, value: T) -> DynBlockRef<'_, T> {
-        unsafe {
-            let r = self.push_raw(&value);
-            mem::forget(value);
-            r
+    // #[inline]
+    // pub fn push<T>(&mut self, value: T) -> DynBlockRef<'_, T> {
+    //     unsafe {
+    //         let r = self.push_raw(&value);
+    //         mem::forget(value);
+    //         r
+    //     }
+    // }
+
+    /// # Safety
+    ///
+    /// all values stored on the blocks must be dropped first (drop_in_place)
+    pub unsafe fn clear(&mut self) {
+        for (ptr, size, align) in self.blocks.drain(..) {
+            let layout = alloc::alloc::Layout::from_size_align_unchecked(size, align);
+            unsafe { alloc::alloc::dealloc(ptr, layout) }
+        }
+    }
+
+    pub fn extend_dynblocks(&mut self, mut other: Self) {
+        if other.blocks.is_empty() {
+            return;
+        }
+        self.blocks.append(&mut other.blocks);
+        self.next_block_offset = other.next_block_offset;
+        if other.block_size > self.block_size {
+            self.block_size = other.block_size;
         }
     }
 }
 
-pub struct DynBlockRef<'l, T: ?Sized>(&'l mut T);
+impl Default for DynBlocks {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+struct DynBlockRef<'l, T: ?Sized>(&'l mut T);
 
 impl<'l, T: ?Sized> DynBlockRef<'l, T> {
-    pub fn into_ref(self) -> &'l T {
-        let r: *const T = self.0;
-        unsafe {
-            mem::forget(self);
-            &*r
-        }
-    }
     pub fn into_mut(self) -> &'l mut T {
         let r: *mut T = self.0;
         unsafe {
             mem::forget(self);
             &mut *r
         }
-    }
-
-    pub fn as_ptr(&mut self) -> *const T {
-        self.0
     }
 
     pub fn as_mut_ptr(&mut self) -> *mut T {
@@ -201,6 +218,19 @@ impl<T: ?Sized> DynSequence<T> {
     #[inline]
     pub fn is_empty(&self) -> bool {
         self.ptrs.is_empty()
+    }
+
+    pub fn clear(&mut self) {
+        for p in self.ptrs.drain(..) {
+            unsafe {
+                ptr::drop_in_place(p);
+            }
+        }
+        // # SAFETY:
+        // all values are dropped
+        unsafe {
+            self.blocks.clear();
+        }
     }
 
     /// Inserts a new value into the DynSequence at the given index (see Vec::insert)
@@ -286,6 +316,11 @@ impl<T: ?Sized> DynSequence<T> {
     }
 
     #[inline]
+    pub fn as_mut_const_slice(&mut self) -> &mut [&T] {
+        unsafe { mem::transmute(self.ptrs.as_mut_slice()) }
+    }
+
+    #[inline]
     pub fn iter(&self) -> DynSeqIter<'_, T> {
         self.as_slice().iter().copied()
     }
@@ -293,6 +328,14 @@ impl<T: ?Sized> DynSequence<T> {
     #[inline]
     pub fn iter_mut(&mut self) -> DynSeqIterMut<'_, T> {
         DynSeqIterMut(self.as_mut_slice().iter_mut())
+    }
+
+    pub fn extend_dynsequence(&mut self, mut other: Self) {
+        if other.is_empty() {
+            return;
+        }
+        self.blocks.extend_dynblocks(mem::take(&mut other.blocks));
+        self.ptrs.extend(mem::take(&mut other.ptrs))
     }
 }
 
@@ -374,13 +417,19 @@ impl<'l, T: ?Sized> IntoIterator for &'l mut DynSequence<T> {
 
 impl<T: ?Sized> Drop for DynSequence<T> {
     fn drop(&mut self) {
-        for p in self.ptrs.drain(..) {
-            unsafe {
-                ptr::drop_in_place(p);
-            }
-        }
+        self.clear();
     }
 }
+
+impl<T: ?Sized> Default for DynSequence<T> {
+    #[inline]
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+unsafe impl<T: ?Sized> Send for DynSequence<T> where T: Send {}
+unsafe impl<T: ?Sized> Sync for DynSequence<T> where T: Sync {}
 
 #[doc(hidden)]
 pub use ::core::mem::forget as __forget;
