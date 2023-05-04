@@ -21,61 +21,45 @@ jobs:
           - stable
           - beta
           - nightly
+        include:
+          - cargo_features_arg: ''
+          - channel: nightly
+            cargo_features_arg: '--features unstable'
     steps:
-    - uses: actions/checkout@v2
-    - uses: actions-rs/toolchain@v1
-      with:
-        profile: minimal
-        toolchain: ${{ matrix.channel }}
-        override: true
+    - uses: actions/checkout@v3
+    - name: Install toolchain
+      run: |
+        rustup toolchain install ${{ matrix.channel }} --no-self-update --profile minimal -c "clippy,rustfmt"
+        rustup default ${{ matrix.channel }}
     - name: Cache cargo registry & index
-      uses: actions/cache@v2
+      uses: actions/cache@v3
       with:
         path: |
           ~/.cargo/registry
           ~/.cargo/git
         key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.*') }}
-    - name: Select Nightly Features
-      if: matrix.channel == 'nightly'
-      run: |
-        echo 'CARGO_FEATURES_ARG=--features unstable' >> $GITHUB_ENV
     - name: Build
-      uses: actions-rs/cargo@v1
-      with:
-        command: build
-        args: --workspace --all-targets ${{ env.CARGO_FEATURES_ARG }}
-    - name: Run tests
-      uses: actions-rs/cargo@v1
-      with:
-        command: test
-        args: --workspace --all-targets ${{ env.CARGO_FEATURES_ARG }}
+      run: |
+        cargo build --workspace --all-targets ${{ matrix.cargo_features_arg }}
+    - name: Test
+      run: |
+        cargo test --workspace --all-targets ${{ matrix.cargo_features_arg }}
 
   check:
     name: Rustfmt & Clippy
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v2
-      - uses: actions-rs/toolchain@v1
-        with:
-          profile: minimal
-          toolchain: stable
-          override: true
-          components: rustfmt, clippy
+      - uses: actions/checkout@v3
       - name: Cache cargo registry & index
-        uses: actions/cache@v2
+        uses: actions/cache@v3
         with:
           path: |
             ~/.cargo/registry
             ~/.cargo/git
           key: cargo-index-${{ runner.os }}-${{ hashFiles('**/Cargo.*') }}
       - name: Rustfmt
-        uses: actions-rs/cargo@v1
-        with:
-          command: fmt
-          args: --all -- --check
+        run: |
+          cargo fmt --all --check
       - name: Clippy
-        uses: actions-rs/clippy-check@v1
-        with:
-          token: ${{ secrets.GITHUB_TOKEN }}
-          args: --workspace --all-targets
-          name: Rustfmt & Clippy
+        run: |
+          cargo clippy --workspace --all-targets
