@@ -1,6 +1,6 @@
 [package]
 name = "dynsequence"
-version = "0.1.0-alpha.3"
+version = "0.1.0-alpha.4"
 description = "Sequence-Like data-structure for storing dynamically sized types"
 authors = ["Christoph Hommelsheim <main@chommel.eu>"]
 license = "MIT OR Apache-2.0"
