@@ -221,9 +221,11 @@ impl<T: ?Sized> DynSequence<T> {
     }
 
     pub fn clear(&mut self) {
-        for p in self.ptrs.drain(..) {
-            unsafe {
-                ptr::drop_in_place(p);
+        if mem::needs_drop::<T>() {
+            for p in self.ptrs.drain(..) {
+                unsafe {
+                    ptr::drop_in_place(p);
+                }
             }
         }
         // # SAFETY:
